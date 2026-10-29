@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RolUsuario {
+  admin
+  vivero
+  cliente
+
+  @@map("rol_usuario")
+}
+
+enum EstadoPedido {
+  pendiente
+  confirmado
+  entregado
+  cancelado
+
+  @@map("estado_pedido")
+}
+
+enum TipoTarea {
+  riego
+  siembra
+  poda
+
+  @@map("tipo_tarea")
+}
+
+model Especie {
+  id               BigInt         @id @default(autoincrement())
+  nombreComun      String         @map("nombre_comun")
+  nombreCientifico String?        @map("nombre_cientifico")
+  familia          String?
+  gbifKey          BigInt?        @unique @map("gbif_key")
+  nativa           Boolean        @default(true)
+  usos             String[]       @default([])
+  fuentes          String[]       @default([])
+  imagenUrl        String?        @map("imagen_url")
+  creadoEn         DateTime       @default(now()) @map("creado_en") @db.Timestamptz
+  cuidado          Cuidado?
+  existencias      Existencia[]
+  recordatorios    Recordatorio[]
+
+  @@map("especies")
+}
+
+model Cuidado {
+  especieId  BigInt   @id @map("especie_id")
+  luz        String?
+  riego      String?
+  suelo      String?
+  trasplante String?
+  plagas     String[] @default([])
+  fuente     String?
+  especie    Especie  @relation(fields: [especieId], references: [id], onDelete: Cascade)
+
+  @@map("cuidados")
+}
+
+model Negocio {
+  id             BigInt         @id @default(autoincrement())
+  nombre         String
+  tipo           String         @default("vivero")
+  sector         String?
+  lat            Decimal?       @db.Decimal(9, 6)
+  lng            Decimal?       @db.Decimal(9, 6)
+  telefono       String?
+  formalizacion  Json           @default("{}")
+  verificado     Boolean        @default(false)
+  usuarios       Usuario[]
+  existencias    Existencia[]
+  pedidos        Pedido[]
+  recordatorios  Recordatorio[]
+
+  @@map("negocios")
+}
+
+model Usuario {
+  id               BigInt    @id @default(autoincrement())
+  nombre           String
+  email            String    @unique
+  passwordHash     String    @map("password_hash")
+  rol              RolUsuario
+  negocioId        BigInt?   @map("negocio_id")
+  consentimientoAt DateTime  @map("consentimiento_at") @db.Timestamptz
+  negocio          Negocio?  @relation(fields: [negocioId], references: [id], onDelete: SetNull)
+  pedidos          Pedido[]
+
+  @@map("usuarios")
+}
+
+model Existencia {
+  id            BigInt         @id @default(autoincrement())
+  negocioId     BigInt         @map("negocio_id")
+  especieId     BigInt         @map("especie_id")
+  presentacion  String
+  tamanoCm      Int?           @map("tamano_cm")
+  precioCop     Int            @map("precio_cop")
+  cantidad      Int
+  stockMinimo   Int            @default(0) @map("stock_minimo")
+  ubicacion     String?
+  actualizadoEn DateTime       @default(now()) @updatedAt @map("actualizado_en") @db.Timestamptz
+  negocio       Negocio        @relation(fields: [negocioId], references: [id], onDelete: Cascade)
+  especie       Especie        @relation(fields: [especieId], references: [id])
+  pedidoItems   PedidoItem[]
+  recordatorios Recordatorio[]
+
+  @@unique([negocioId, especieId, presentacion, tamanoCm], map: "existencias_presentacion_unica")
+  @@index([negocioId])
+  @@index([especieId])
+  @@map("existencias")
+}
+
+model Pedido {
+  id         BigInt            @id @default(autoincrement())
+  negocioId  BigInt            @map("negocio_id")
+  clienteId  BigInt            @map("cliente_id")
+  estado     EstadoPedido      @default(pendiente)
+  totalCop   Int               @default(0) @map("total_cop")
+  creadoEn   DateTime          @default(now()) @map("creado_en") @db.Timestamptz
+  negocio    Negocio           @relation(fields: [negocioId], references: [id])
+  cliente    Usuario           @relation(fields: [clienteId], references: [id])
+  items      PedidoItem[]
+  historial  PedidoHistorial[]
+
+  @@index([negocioId, estado, creadoEn(sort: Desc)], map: "pedidos_negocio_estado")
+  @@index([clienteId], map: "pedidos_cliente_idx")
+  @@map("pedidos")
+}
+
+model PedidoItem {
+  id            BigInt     @id @default(autoincrement())
+  pedidoId      BigInt     @map("pedido_id")
+  existenciaId  BigInt     @map("existencia_id")
+  descripcion   String
+  cantidad      Int
+  precioUnitCop Int        @map("precio_unit_cop")
+  pedido        Pedido     @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  existencia    Existencia @relation(fields: [existenciaId], references: [id])
+
+  @@index([pedidoId], map: "pedido_items_pedido_idx")
+  @@map("pedido_items")
+}
+
+model PedidoHistorial {
+  id       BigInt       @id @default(autoincrement())
+  pedidoId BigInt       @map("pedido_id")
+  estado   EstadoPedido
+  fecha    DateTime     @default(now()) @db.Timestamptz
+  pedido   Pedido       @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@map("pedido_historial")
+}
+
+model Recordatorio {
+  id           BigInt      @id @default(autoincrement())
+  negocioId    BigInt      @map("negocio_id")
+  existenciaId BigInt?     @map("existencia_id")
+  especieId    BigInt?     @map("especie_id")
+  tipo         TipoTarea
+  proximaFecha DateTime    @map("proxima_fecha") @db.Timestamptz
+  cadaDias     Int?        @map("cada_dias")
+  hecho        Boolean     @default(false)
+  negocio      Negocio     @relation(fields: [negocioId], references: [id], onDelete: Cascade)
+  existencia   Existencia? @relation(fields: [existenciaId], references: [id], onDelete: Cascade)
+  especie      Especie?    @relation(fields: [especieId], references: [id])
+
+  @@index([negocioId, proximaFecha], map: "recordatorios_pendientes")
+  @@map("recordatorios")
+}
